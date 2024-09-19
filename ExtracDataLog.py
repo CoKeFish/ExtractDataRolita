@@ -48,7 +48,7 @@ HEADERS_SPECIFIC = {
 }
 
 
-def extract_json_objects(logs):
+def extract_json_objects_from_logs(logs):
     json_objects = []
     start_positions = [match.start() for match in LOG_PATTERN.finditer(logs)]
     start_positions.append(len(logs))
@@ -66,11 +66,22 @@ def extract_json_objects(logs):
                     json_obj = json.loads(json_str_fixed)
                     json_objects.append(json_obj)
                 except:
-
                     print(f"Error al decodificar JSON: - Fragmento: {json_str_fixed}")
                     pass
 
     return json_objects
+
+
+def extract_json_objects_from_file(file_content):
+    try:
+        json_objects = json.loads(file_content)
+        if isinstance(json_objects, list):
+            return json_objects
+        else:
+            return [json_objects]
+    except json.JSONDecodeError as e:
+        print(f"Error al decodificar JSON: {str(e)}")
+        return []
 
 
 def format_date(date_str):
@@ -99,16 +110,24 @@ def extract_values(json_obj, headers):
 
 
 def process_file(input_path, output_path):
-    with open(input_path, 'r', encoding='utf-16') as file:
+    # Verifica si el archivo de entrada es JSON o un log regular
+    is_json_file = input_path.lower().endswith('.json')
+
+    with open(input_path, 'r', encoding='utf-16' if not is_json_file else 'utf-8') as file:
         content = file.read()
 
-    json_objects = extract_json_objects(content)
+    # Procesa el archivo dependiendo de su tipo
+    if is_json_file:
+        json_objects = extract_json_objects_from_file(content)
+    else:
+        json_objects = extract_json_objects_from_logs(content)
+
     funciones_extraccion = {key: extract_values for key in HEADERS_SPECIFIC}
 
     if not os.path.exists(output_path):
         os.makedirs(output_path)
 
-    # Copiar el archivo .log al directorio de salida
+    # Copiar el archivo .log o .json al directorio de salida
     shutil.copy(input_path, output_path)
 
     archivos_csv = {tipo: open(os.path.join(output_path, f'{tipo}.csv'), 'w', newline='') for tipo in HEADERS_SPECIFIC}
@@ -119,10 +138,16 @@ def process_file(input_path, output_path):
         escritores_csv[tipo].writerow(headers)
 
     for obj in json_objects:
-        tipo = obj.get("codigoPeriodica") or obj.get("codigoEvento") or obj.get("codigoAlarma")
+        if is_json_file:
+            # Para archivos JSON, los datos están dentro del campo "data"
+            data = obj.get("data", {})
+        else:
+            # Para logs, los datos están en el nivel superior
+            data = obj
+        tipo = data.get("codigoPeriodica") or data.get("codigoEvento") or data.get("codigoAlarma")
         if tipo in funciones_extraccion:
             headers = COMMON_HEADERS + HEADERS_SPECIFIC[tipo]
-            datos_ordenados = funciones_extraccion[tipo](obj, headers)
+            datos_ordenados = funciones_extraccion[tipo](data, headers)
             escritores_csv[tipo].writerow(datos_ordenados)
         else:
             print(f"Tipo desconocido: {tipo}")
