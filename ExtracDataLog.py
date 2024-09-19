@@ -109,6 +109,21 @@ def extract_values(json_obj, headers):
     return values
 
 
+def ensure_directory(path):
+    """Crea la carpeta si no existe."""
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+
+def get_output_folder(base_path, bus_id, fecha):
+    """Devuelve la ruta de salida en formato bus-dia-mes-año con meses y días de 2 dígitos."""
+    fecha_obj = datetime.strptime(fecha, '%Y-%m-%d %H:%M:%S.%f')
+    folder_name = f"{bus_id}-{fecha_obj.day:02d}-{fecha_obj.month:02d}-{fecha_obj.year}"
+    folder_path = os.path.join(base_path, folder_name)
+    ensure_directory(folder_path)
+    return folder_path
+
+
 def process_file(input_path, output_path):
     # Verifica si el archivo de entrada es JSON o un log regular
     is_json_file = input_path.lower().endswith('.json')
@@ -124,18 +139,8 @@ def process_file(input_path, output_path):
 
     funciones_extraccion = {key: extract_values for key in HEADERS_SPECIFIC}
 
-    if not os.path.exists(output_path):
-        os.makedirs(output_path)
-
     # Copiar el archivo .log o .json al directorio de salida
     shutil.copy(input_path, output_path)
-
-    archivos_csv = {tipo: open(os.path.join(output_path, f'{tipo}.csv'), 'w', newline='') for tipo in HEADERS_SPECIFIC}
-    escritores_csv = {tipo: csv.writer(archivo) for tipo, archivo in archivos_csv.items()}
-
-    for tipo, specific_headers in HEADERS_SPECIFIC.items():
-        headers = COMMON_HEADERS + specific_headers
-        escritores_csv[tipo].writerow(headers)
 
     for obj in json_objects:
         if is_json_file:
@@ -144,16 +149,33 @@ def process_file(input_path, output_path):
         else:
             # Para logs, los datos están en el nivel superior
             data = obj
+
+        # Extraer idVehiculo (bus) y la fecha para crear la carpeta
+        bus_id = data.get("idVehiculo", "desconocido")[-4:]
+        fecha = format_date(data.get("fechaHoraLecturaDato", ""))
+
+        # Crear la carpeta de salida basada en el bus y la fecha
+        folder_path = get_output_folder(output_path, bus_id, fecha)
+
         tipo = data.get("codigoPeriodica") or data.get("codigoEvento") or data.get("codigoAlarma")
         if tipo in funciones_extraccion:
             headers = COMMON_HEADERS + HEADERS_SPECIFIC[tipo]
-            datos_ordenados = funciones_extraccion[tipo](data, headers)
-            escritores_csv[tipo].writerow(datos_ordenados)
+
+            # Abrir el archivo CSV para este bus/tipo
+            csv_file_path = os.path.join(folder_path, f'{tipo}.csv')
+            file_exists = os.path.isfile(csv_file_path)
+
+            with open(csv_file_path, 'a', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+
+                # Escribir el encabezado solo si el archivo es nuevo
+                if not file_exists:
+                    writer.writerow(headers)
+
+                datos_ordenados = funciones_extraccion[tipo](data, headers)
+                writer.writerow(datos_ordenados)
         else:
             print(f"Tipo desconocido: {tipo}")
-
-    for archivo in archivos_csv.values():
-        archivo.close()
 
 
 if __name__ == "__main__":
